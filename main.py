@@ -3,6 +3,7 @@ import pandas as pd
 from dotenv import load_dotenv
 from googleapiclient.discovery import build
 from datetime import datetime, timedelta, timezone
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 load_dotenv()
 
@@ -11,9 +12,10 @@ YT_API_KEY = os.getenv("YT_API")
 YT_CHANNEL_MAP_STR = os.getenv("YT_CHANNEL_MAP", "")
 YT_DAYS_TO_ANALYZE = int(os.getenv("YT_DAYS_TO_ANALYZE", 1))
 
-CSV_FILE = 'youtube_analytics.csv'
+CSV_FILE = f'youtube_analytics_{YT_DAYS_TO_ANALYZE}D.csv'
 
 def get_video_ids_from_playlist(youtube, playlist_id, start_date):
+    """Obtiene una lista de video IDs de una playlist, filtrados por fecha."""
     video_ids = []
     next_page_token = None
     while True:
@@ -41,7 +43,33 @@ def get_video_ids_from_playlist(youtube, playlist_id, start_date):
                 raise e
     return video_ids
 
+def fetch_playlist_video_ids_task(playlist_id, start_date, channel_name, video_type):
+    """
+    Tarea ejecutada por un hilo para obtener video IDs de una playlist.
+    Crea su propia instancia del cliente de YouTube para evitar problemas de concurrencia.
+    """
+    try:
+        # Crear una nueva instancia del cliente para este hilo
+        youtube = build('youtube', 'v3', developerKey=YT_API_KEY)
+        video_ids = get_video_ids_from_playlist(youtube, playlist_id, start_date)
+        return {
+            'status': 'success',
+            'channel_name': channel_name,
+            'video_type': video_type,
+            'playlist_id': playlist_id,
+            'video_ids': video_ids
+        }
+    except Exception as e:
+        return {
+            'status': 'error',
+            'channel_name': channel_name,
+            'video_type': video_type,
+            'playlist_id': playlist_id,
+            'error': str(e)
+        }
+
 def parse_channel_map(map_string):
+    """Parsea la cadena de mapeo de canales desde la variable de entorno."""
     channel_map = {}
     if not map_string:
         return channel_map
@@ -131,8 +159,6 @@ def fetch_all_video_stats(youtube, video_id_details):
     return stats_dict
 
 def main():
-    youtube = build('youtube', 'v3', developerKey=YT_API_KEY)
-    
     channel_map = parse_channel_map(YT_CHANNEL_MAP_STR)
 
     if not channel_map:
@@ -145,9 +171,12 @@ def main():
     # Lista para almacenar temporalmente todos los video_ids con su metadata
     all_video_id_details = []
     
-    # Primera pasada: recolectar todos los video_ids de todas las playlists
+    # --- Primera pasada: recolectar todos los video_ids de todas las playlists (CONCURRENTE) ---
+    
+    # Preparar lista de tareas
+    tasks = []
     for channel_name, channel_id in channel_map.items():
-        print(f"--- Recopilando videos del Canal: {channel_name} ({channel_id}) ---")
+        print(f"--- Preparando análisis para el Canal: {channel_name} ({channel_id}) ---")
         
         if not channel_id.startswith("UC"):
             print(f"ID de canal no válido para '{channel_name}': {channel_id}. Saltando...")
@@ -161,27 +190,53 @@ def main():
         }
 
         day_str = "día" if YT_DAYS_TO_ANALYZE == 1 else "días"
-        print(f"Recopilando videos de los últimos {YT_DAYS_TO_ANALYZE} {day_str} para el canal: {channel_name}")
+        print(f"Preparando recopilación de videos de los últimos {YT_DAYS_TO_ANALYZE} {day_str} para el canal: {channel_name}")
 
         for video_type, playlist_id in playlists.items():
+             # Añadir tarea a la lista
+            tasks.append((playlist_id, start_date, channel_name, video_type))
+    
+    if not tasks:
+        print("No se encontraron tareas para ejecutar.")
+        return
+        
+    print(f"\nIniciando recopilación concurrente para {len(tasks)} playlists...")
+    
+    # Determinar número de workers (hilos)
+    # Un buen punto de partida: min(32, número_de_tareas + 4)
+    max_workers = min(32, len(tasks) + 4)
+    
+    # Ejecutar tareas concurrentemente
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # Enviar todas las tareas al executor
+        future_to_task = {executor.submit(fetch_playlist_video_ids_task, *task): task for task in tasks}
+        
+        # Recoger resultados a medida que se completan
+        for future in as_completed(future_to_task):
+            task_info = future_to_task[future]
+            channel_name, video_type = task_info[2], task_info[3]
             try:
-                video_ids = get_video_ids_from_playlist(youtube, playlist_id, start_date)
-                print(f"  - {video_type}S: {len(video_ids)} videos encontrados")
-                
-                # Almacenar los detalles de cada video_id
-                for video_id in video_ids:
-                    all_video_id_details.append({
-                        'id': video_id,
-                        'channel_name': channel_name,
-                        'video_type': video_type
-                    })
-                    
-            except Exception as e:
-                if "playlistNotFound" in str(e):
-                    print(f"  - {video_type}S: 0 videos - Playlist no encontrada")
+                result = future.result()
+                if result['status'] == 'success':
+                    video_ids = result['video_ids']
+                    print(f"  - [{channel_name}][{video_type}S] {len(video_ids)} videos encontrados")
+                    # Almacenar los detalles de cada video_id
+                    for video_id in video_ids:
+                        all_video_id_details.append({
+                            'id': video_id,
+                            'channel_name': result['channel_name'],
+                            'video_type': result['video_type']
+                        })
                 else:
-                    print(f"Error al procesar la playlist de {video_type}S para {channel_name}: {e}")
-                    # No rompemos el loop para permitir que otros canales continúen
+                    error_msg = result['error']
+                    if "playlistNotFound" in error_msg:
+                        print(f"  - [{channel_name}][{video_type}S] 0 videos - Playlist no encontrada")
+                    else:
+                        print(f"  - [{channel_name}][{video_type}S] Error: {error_msg}")
+            except Exception as exc:
+                print(f'  - [{channel_name}][{video_type}S] Generó una excepción: {exc}')
+    
+    # --- Fin de la recopilación concurrente ---
     
     if not all_video_id_details:
         print("No se encontraron videos para analizar.")
@@ -190,6 +245,8 @@ def main():
     print(f"\nTotal de videos recopilados: {len(all_video_id_details)}")
     
     # Segunda pasada: obtener todas las estadísticas en una sola operación agrupada
+    # Creamos una instancia de youtube para esta parte, ya que es segura y no concurrente.
+    youtube = build('youtube', 'v3', developerKey=YT_API_KEY)
     all_stats = fetch_all_video_stats(youtube, all_video_id_details)
     
     # Tercera pasada: construir la estructura de datos final por canal
@@ -199,17 +256,24 @@ def main():
         for video_type in ["NORMAL", "SHORT", "LIVE"]:
             key = (channel_name, video_type)
             stats = all_stats.get(key, {'view_count': 0, 'video_count': 0})
-            channel_data[f'{video_type}_Count'] = stats['video_count']
-            channel_data[f'{video_type}_Views'] = stats['view_count']
+            count = stats['video_count']
+            views = stats['view_count']
+            channel_data[f'{video_type}_Count'] = count
+            channel_data[f'{video_type}_Views'] = views
+            # Calcular el promedio de vistas por video, evitando división por cero
+            if count > 0:
+                channel_data[f'{video_type}_Avg_Views_Per_Video'] = round(views / count, 2)
+            else:
+                channel_data[f'{video_type}_Avg_Views_Per_Video'] = 0
         all_channels_data.append(channel_data)
     
     # Imprimir resumen por canal
     print("\n--- Resumen de Análisis ---")
     for data in all_channels_data:
         print(f"\nCanal: {data['ChannelName']}")
-        print(f"  Normales: {data['NORMAL_Count']} (Vistas: {data['NORMAL_Views']:,})")
-        print(f"  Shorts: {data['SHORT_Count']} (Vistas: {data['SHORT_Views']:,})")
-        print(f"  En Vivo: {data['LIVE_Count']} (Vistas: {data['LIVE_Views']:,})")
+        print(f"  Normales: {data['NORMAL_Count']} (Vistas: {data['NORMAL_Views']:,}) (Promedio: {data['NORMAL_Avg_Views_Per_Video']:,})")
+        print(f"  Shorts: {data['SHORT_Count']} (Vistas: {data['SHORT_Views']:,}) (Promedio: {data['SHORT_Avg_Views_Per_Video']:,})")
+        print(f"  En Vivo: {data['LIVE_Count']} (Vistas: {data['LIVE_Views']:,}) (Promedio: {data['LIVE_Avg_Views_Per_Video']:,})")
         print("-" * 30)
 
     if not all_channels_data:
@@ -217,7 +281,12 @@ def main():
         return
 
     df = pd.DataFrame(all_channels_data)
-    column_order = ['Date', 'ChannelName', 'NORMAL_Count', 'NORMAL_Views', 'SHORT_Count', 'SHORT_Views', 'LIVE_Count', 'LIVE_Views']
+    column_order = [
+        'Date', 'ChannelName',
+        'NORMAL_Count', 'NORMAL_Views', 'NORMAL_Avg_Views_Per_Video',
+        'SHORT_Count', 'SHORT_Views', 'SHORT_Avg_Views_Per_Video',
+        'LIVE_Count', 'LIVE_Views', 'LIVE_Avg_Views_Per_Video'
+    ]
     df = df.reindex(columns=column_order) # Use reindex to avoid errors if a column is missing
 
     file_exists = os.path.exists(CSV_FILE)

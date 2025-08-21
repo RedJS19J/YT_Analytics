@@ -47,8 +47,8 @@ YT_DAYS_TO_ANALYZE = 1
 **Ejemplo de archivo `.env`:**
 
 ```env
-YT_API = AIzaSyDYv4MuYyaOMz5gRKZ-CpYMSGiRQYq1bsk
-YT_CHANNEL_MAP = "MiCanalFavorito:UCSaXfIVax093e4FBiQdcf7w,OtroCanal:UCVYH76tdbXjsTuH2bmFjtEw"
+YT_API = 00000000000000000-aaaaaaaaaaaaaaa
+YT_CHANNEL_MAP = "MiCanalFavorito:UC000000aaaaaa,OtroCanal:UC111111bbbbbbbbb"
 YT_DAYS_TO_ANALYZE = 7
 ```
 
