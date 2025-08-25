@@ -1,6 +1,4 @@
-"""
-Script para generar un informe HTML con gráficas basado en los datos de youtube_analytics.csv
-"""
+# Script para generar un informe HTML con gráficas basado en los datos de youtube_analytics.csv
 
 import pandas as pd
 import plotly.express as px
@@ -8,13 +6,10 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import os
 from datetime import datetime
-
-# --- CONFIGURACIÓN ---
-CSV_FILE = 'youtube_analytics_7D.csv'
-REPORT_FILE = 'youtube_analytics_report.html'
+import argparse
 
 def load_and_prepare_data(csv_file_path):
-    """Carga y prepara los datos del CSV para graficar."""
+    # Carga y prepara los datos del CSV para graficar.
     if not os.path.exists(csv_file_path):
         raise FileNotFoundError(f"El archivo {csv_file_path} no se encontró. Ejecute main.py primero.")
     
@@ -31,135 +26,170 @@ def load_and_prepare_data(csv_file_path):
     
     return df
 
-def create_total_views_bar_chart(df):
-    """Crea un gráfico de barras apiladas para vistas totales por canal y tipo."""
-    # Agrupar por canal y sumar todas las vistas
-    df_grouped = df.groupby('ChannelName').agg({
-        'NORMAL_Views': 'sum',
-        'SHORT_Views': 'sum',
-        'LIVE_Views': 'sum'
-    }).reset_index()
+def create_normal_videos_views_bar_chart(df):
+    # Crea un gráfico de barras para vistas de videos normales por canal.
+    # Filtrar y agrupar datos solo para videos normales
+    df_normal = df[df['NORMAL_Views'] > 0]  # Solo canales con videos normales
+    if df_normal.empty:
+        # Si no hay datos, crear un DataFrame vacío con las columnas necesarias
+        df_normal = pd.DataFrame(columns=['ChannelName', 'NORMAL_Views'])
+    else:
+        # Ordenar de mayor a menor según las vistas
+        df_normal = df_normal.sort_values(by='NORMAL_Views', ascending=False)
     
-    # Usar Plotly Express para un gráfico de barras apiladas
     fig = px.bar(
-        df_grouped,
+        df_normal,
         x='ChannelName',
-        y=['NORMAL_Views', 'SHORT_Views', 'LIVE_Views'],
-        title="Vistas Totales Acumuladas por Canal y Tipo de Video",
-        labels={'value': 'Número de Vistas', 'variable': 'Tipo de Video'},
-        color_discrete_map={
-            'NORMAL_Views': '#636EFA', # Azul
-            'SHORT_Views': '#EF553B',  # Rojo
-            'LIVE_Views': '#00CC96'    # Verde
-        }
+        y='NORMAL_Views',
+        title="Vistas Totales de Videos Normales por Canal",
+        labels={'NORMAL_Views': 'Número de Vistas'},
+        color_discrete_sequence=['#636EFA']  # Azul para videos normales
     )
     
     fig.update_layout(
         xaxis_title="Canal",
-        yaxis_title="Vistas Totales",
-        legend_title_text='Tipo de Video',
+        yaxis_title="Vistas Totales (Videos Normales)",
         height=600
     )
     return fig
 
-def create_avg_views_bar_chart(df):
-    """Crea un gráfico de barras para el promedio de vistas por video por canal y tipo."""
-    # Agrupar por canal y calcular el promedio ponderado
-    df_grouped = df.groupby('ChannelName', group_keys=False).apply(
-        lambda x: pd.Series({
-            'NORMAL_Avg_Views_Per_Video': (x['NORMAL_Views'].sum() / x['NORMAL_Count'].sum()) if x['NORMAL_Count'].sum() > 0 else 0,
-            'SHORT_Avg_Views_Per_Video': (x['SHORT_Views'].sum() / x['SHORT_Count'].sum()) if x['SHORT_Count'].sum() > 0 else 0,
-            'LIVE_Avg_Views_Per_Video': (x['LIVE_Views'].sum() / x['LIVE_Count'].sum()) if x['LIVE_Count'].sum() > 0 else 0,
-        }), include_groups=False
-    ).reset_index()
+def create_shorts_views_bar_chart(df):
+    # Crea un gráfico de barras para vistas de Shorts por canal.
+    # Filtrar y agrupar datos solo para Shorts
+    df_shorts = df[df['SHORT_Views'] > 0]  # Solo canales con Shorts
+    if df_shorts.empty:
+        # Si no hay datos, crear un DataFrame vacío con las columnas necesarias
+        df_shorts = pd.DataFrame(columns=['ChannelName', 'SHORT_Views'])
+    else:
+        # Ordenar de mayor a menor según las vistas
+        df_shorts = df_shorts.sort_values(by='SHORT_Views', ascending=False)
     
-    # Usar Plotly Express
     fig = px.bar(
-        df_grouped,
+        df_shorts,
         x='ChannelName',
-        y=['NORMAL_Avg_Views_Per_Video', 'SHORT_Avg_Views_Per_Video', 'LIVE_Avg_Views_Per_Video'],
-        title="Promedio de Vistas por Video por Canal y Tipo",
-        labels={'value': 'Vistas Promedio por Video', 'variable': 'Tipo de Video'},
-        color_discrete_map={
-            'NORMAL_Avg_Views_Per_Video': '#636EFA',
-            'SHORT_Avg_Views_Per_Video': '#EF553B',
-            'LIVE_Avg_Views_Per_Video': '#00CC96'
-        }
+        y='SHORT_Views',
+        title="Vistas Totales de Shorts por Canal",
+        labels={'SHORT_Views': 'Número de Vistas'},
+        color_discrete_sequence=['#EF553B']  # Rojo para Shorts
     )
     
     fig.update_layout(
         xaxis_title="Canal",
-        yaxis_title="Vistas Promedio por Video",
-        legend_title_text='Tipo de Video',
+        yaxis_title="Vistas Totales (Shorts)",
         height=600
     )
     return fig
 
-def create_time_series_chart(df):
-    """Crea un gráfico de líneas para la evolución de vistas por tipo a lo largo del tiempo."""
-    # Agrupar por fecha y sumar todas las vistas de cada tipo
-    df_time = df.groupby('Date').agg({
-        'NORMAL_Views': 'sum',
-        'SHORT_Views': 'sum',
-        'LIVE_Views': 'sum'
-    }).reset_index()
+def create_live_views_bar_chart(df):
+    # Crea un gráfico de barras para vistas de videos en vivo por canal.
+    # Filtrar y agrupar datos solo para videos en vivo
+    df_live = df[df['LIVE_Views'] > 0]  # Solo canales con videos en vivo
+    if df_live.empty:
+        # Si no hay datos, crear un DataFrame vacío con las columnas necesarias
+        df_live = pd.DataFrame(columns=['ChannelName', 'LIVE_Views'])
+    else:
+        # Ordenar de mayor a menor según las vistas
+        df_live = df_live.sort_values(by='LIVE_Views', ascending=False)
     
-    # Usar Plotly Express
-    fig = px.line(
-        df_time,
-        x='Date',
-        y=['NORMAL_Views', 'SHORT_Views', 'LIVE_Views'],
-        title="Evolución de Vistas Totales por Tipo de Video en el Tiempo",
-        labels={'value': 'Número de Vistas', 'variable': 'Tipo de Video'},
-        markers=True, # Añade marcadores a los puntos
-        color_discrete_map={
-            'NORMAL_Views': '#636EFA',
-            'SHORT_Views': '#EF553B',
-            'LIVE_Views': '#00CC96'
-        }
-    )
-    
-    fig.update_layout(
-        xaxis_title="Fecha",
-        yaxis_title="Vistas Totales",
-        legend_title_text='Tipo de Video',
-        height=600
-    )
-    return fig
-
-def create_video_count_bar_chart(df):
-    """Crea un gráfico de barras apiladas para la cantidad de videos por canal y tipo."""
-    # Agrupar por canal y sumar todos los conteos
-    df_grouped = df.groupby('ChannelName').agg({
-        'NORMAL_Count': 'sum',
-        'SHORT_Count': 'sum',
-        'LIVE_Count': 'sum'
-    }).reset_index()
-    
-    # Usar Plotly Express
     fig = px.bar(
-        df_grouped,
+        df_live,
         x='ChannelName',
-        y=['NORMAL_Count', 'SHORT_Count', 'LIVE_Count'],
-        title="Cantidad Total de Videos Subidos por Canal y Tipo",
-        labels={'value': 'Número de Videos', 'variable': 'Tipo de Video'},
-        color_discrete_map={
-            'NORMAL_Count': '#636EFA',
-            'SHORT_Count': '#EF553B',
-            'LIVE_Count': '#00CC96'
-        }
+        y='LIVE_Views',
+        title="Vistas Totales de Videos En Vivo por Canal",
+        labels={'LIVE_Views': 'Número de Vistas'},
+        color_discrete_sequence=['#00CC96']  # Verde para videos en vivo
     )
     
     fig.update_layout(
         xaxis_title="Canal",
-        yaxis_title="Cantidad de Videos",
-        legend_title_text='Tipo de Video',
+        yaxis_title="Vistas Totales (En Vivo)",
+        height=600
+    )
+    return fig
+
+def create_normal_videos_avg_views_bar_chart(df):
+    # Crea un gráfico de barras para promedio de vistas por video normal por canal.
+    # Filtrar y agrupar datos solo para videos normales
+    df_normal = df[df['NORMAL_Count'] > 0]  # Solo canales con videos normales
+    if df_normal.empty:
+        # Si no hay datos, crear un DataFrame vacío con las columnas necesarias
+        df_normal = pd.DataFrame(columns=['ChannelName', 'NORMAL_Avg_Views_Per_Video'])
+    else:
+        # Ordenar de mayor a menor según el promedio de vistas
+        df_normal = df_normal.sort_values(by='NORMAL_Avg_Views_Per_Video', ascending=False)
+    
+    fig = px.bar(
+        df_normal,
+        x='ChannelName',
+        y='NORMAL_Avg_Views_Per_Video',
+        title="Promedio de Vistas por Video Normal por Canal",
+        labels={'NORMAL_Avg_Views_Per_Video': 'Promedio de Vistas por Video'},
+        color_discrete_sequence=['#636EFA']  # Azul para videos normales
+    )
+    
+    fig.update_layout(
+        xaxis_title="Canal",
+        yaxis_title="Promedio de Vistas por Video Normal",
+        height=600
+    )
+    return fig
+
+def create_shorts_avg_views_bar_chart(df):
+    # Crea un gráfico de barras para promedio de vistas por Short por canal.
+    # Filtrar y agrupar datos solo para Shorts
+    df_shorts = df[df['SHORT_Count'] > 0]  # Solo canales con Shorts
+    if df_shorts.empty:
+        # Si no hay datos, crear un DataFrame vacío con las columnas necesarias
+        df_shorts = pd.DataFrame(columns=['ChannelName', 'SHORT_Avg_Views_Per_Video'])
+    else:
+        # Ordenar de mayor a menor según el promedio de vistas
+        df_shorts = df_shorts.sort_values(by='SHORT_Avg_Views_Per_Video', ascending=False)
+    
+    fig = px.bar(
+        df_shorts,
+        x='ChannelName',
+        y='SHORT_Avg_Views_Per_Video',
+        title="Promedio de Vistas por Short por Canal",
+        labels={'SHORT_Avg_Views_Per_Video': 'Promedio de Vistas por Short'},
+        color_discrete_sequence=['#EF553B']  # Rojo para Shorts
+    )
+    
+    fig.update_layout(
+        xaxis_title="Canal",
+        yaxis_title="Promedio de Vistas por Short",
+        height=600
+    )
+    return fig
+
+def create_live_avg_views_bar_chart(df):
+    # Crea un gráfico de barras para promedio de vistas por video en vivo por canal.
+    # Filtrar y agrupar datos solo para videos en vivo
+    df_live = df[df['LIVE_Count'] > 0]  # Solo canales con videos en vivo
+    if df_live.empty:
+        # Si no hay datos, crear un DataFrame vacío con las columnas necesarias
+        df_live = pd.DataFrame(columns=['ChannelName', 'LIVE_Avg_Views_Per_Video'])
+    else:
+        # Ordenar de mayor a menor según el promedio de vistas
+        df_live = df_live.sort_values(by='LIVE_Avg_Views_Per_Video', ascending=False)
+    
+    fig = px.bar(
+        df_live,
+        x='ChannelName',
+        y='LIVE_Avg_Views_Per_Video',
+        title="Promedio de Vistas por Video En Vivo por Canal",
+        labels={'LIVE_Avg_Views_Per_Video': 'Promedio de Vistas por Video'},
+        color_discrete_sequence=['#00CC96']  # Verde para videos en vivo
+    )
+    
+    fig.update_layout(
+        xaxis_title="Canal",
+        yaxis_title="Promedio de Vistas por Video En Vivo",
         height=600
     )
     return fig
 
 def generate_html_report(figures, output_file):
-    """Genera un archivo HTML que contiene todas las figuras."""
+    # Genera un archivo HTML que contiene todas las figuras.
     with open(output_file, 'w', encoding='utf-8') as f:
         f.write("<!DOCTYPE html>\n")
         f.write("<html>\n<head>\n")
@@ -188,9 +218,14 @@ def generate_html_report(figures, output_file):
     print(f"Informe HTML generado: {output_file}")
 
 def main():
-    """Función principal para ejecutar el script."""
+    # Función principal para ejecutar el script.
+    parser = argparse.ArgumentParser(description='Genera un informe HTML con gráficas a partir de datos de YouTube Analytics.')
+    parser.add_argument('--csv', default='youtube_analytics_90D.csv', help='Ruta al archivo CSV de entrada.')
+    parser.add_argument('--output', default='youtube_analytics_report.html', help='Ruta al archivo HTML de salida.')
+    args = parser.parse_args()
+
     print("Cargando datos...")
-    df = load_and_prepare_data(CSV_FILE)
+    df = load_and_prepare_data(args.csv)
     
     if df.empty:
         print("No hay datos para generar el informe.")
@@ -199,36 +234,50 @@ def main():
     print("Creando gráficos...")
     figures = []
     
+    # Nuevas gráficas específicas
     try:
-        fig1 = create_total_views_bar_chart(df)
-        figures.append(("Vistas Totales Acumuladas por Canal y Tipo de Video", fig1))
+        fig1 = create_normal_videos_views_bar_chart(df)
+        figures.append(("Vistas Totales de Videos Normales por Canal", fig1))
     except Exception as e:
-        print(f"Error al crear el gráfico de vistas totales: {e}")
+        print(f"Error al crear el gráfico de vistas de videos normales: {e}")
 
     try:
-        fig2 = create_avg_views_bar_chart(df)
-        figures.append(("Promedio de Vistas por Video por Canal y Tipo", fig2))
+        fig2 = create_shorts_views_bar_chart(df)
+        figures.append(("Vistas Totales de Shorts por Canal", fig2))
     except Exception as e:
-        print(f"Error al crear el gráfico de vistas promedio: {e}")
+        print(f"Error al crear el gráfico de vistas de Shorts: {e}")
 
     try:
-        fig3 = create_time_series_chart(df)
-        figures.append(("Evolución de Vistas Totales por Tipo de Video en el Tiempo", fig3))
+        fig3 = create_live_views_bar_chart(df)
+        figures.append(("Vistas Totales de Videos En Vivo por Canal", fig3))
     except Exception as e:
-        print(f"Error al crear el gráfico de series temporales: {e}")
+        print(f"Error al crear el gráfico de vistas de videos en vivo: {e}")
+        
+    # Nuevas gráficas de promedio de vistas por video
+    try:
+        fig4 = create_normal_videos_avg_views_bar_chart(df)
+        figures.append(("Promedio de Vistas por Video Normal por Canal", fig4))
+    except Exception as e:
+        print(f"Error al crear el gráfico de promedio de vistas por video normal: {e}")
 
     try:
-        fig4 = create_video_count_bar_chart(df)
-        figures.append(("Cantidad Total de Videos Subidos por Canal y Tipo", fig4))
+        fig5 = create_shorts_avg_views_bar_chart(df)
+        figures.append(("Promedio de Vistas por Short por Canal", fig5))
     except Exception as e:
-        print(f"Error al crear el gráfico de conteo de videos: {e}")
+        print(f"Error al crear el gráfico de promedio de vistas por Short: {e}")
+
+    try:
+        fig6 = create_live_avg_views_bar_chart(df)
+        figures.append(("Promedio de Vistas por Video En Vivo por Canal", fig6))
+    except Exception as e:
+        print(f"Error al crear el gráfico de promedio de vistas por video en vivo: {e}")
 
     if not figures:
         print("No se pudieron crear gráficos.")
         return
         
     print("Generando informe HTML...")
-    generate_html_report(figures, REPORT_FILE)
+    generate_html_report(figures, args.output)
     print("¡Informe generado con éxito!")
 
 if __name__ == "__main__":
