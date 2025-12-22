@@ -9,7 +9,7 @@ load_dotenv()
 # --- CONFIGURACIÓN CARGADA DESDE .env ---
 YT_API_KEY = os.getenv("YT_API")
 YT_CHANNEL_MAP_STR = os.getenv("YT_CHANNEL_MAP", "")
-YT_DAYS_TO_ANALYZE = int(os.getenv("YT_DAYS_TO_ANALYZE", 7)) # Default to 7 days if not set
+YT_DAYS_TO_ANALYZE = int(7) # Default to 7 days if not set
 
 CSV_OUTPUT_FILE = 'top_videos_report.csv'
 
